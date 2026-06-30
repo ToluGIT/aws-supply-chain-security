@@ -157,12 +157,13 @@ jobs:
           cosign attest --yes --predicate provenance.json \
             --type slsaprovenance "${ECR_URI}@${DIGEST}"
 
-      - name: Attach SBOM as attestation
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          cosign attest --yes --predicate sbom.cyclonedx.json \
-            --type cyclonedx "${ECR_URI}@${DIGEST}"
+      # Note: the SBOM is published as a workflow artifact (Syft step) and is
+      # also exported to S3 by Inspector. We intentionally do NOT also attach
+      # it as an OCI attestation: Cosign stores all attestations under a single
+      # `sha256-<digest>.att` tag, and ECR tag immutability rejects the second
+      # write once the SLSA provenance attestation has claimed that tag. The
+      # provenance attestation is the one that travels with the image; the SBOM
+      # travels as the run artifact and the S3 export.
 
       - name: Verify gate — signature + identity
         env:
