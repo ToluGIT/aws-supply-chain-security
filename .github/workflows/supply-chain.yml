@@ -1,7 +1,8 @@
 name: supply-chain
 
-# Phase 2 scope: build -> keyless AWS auth -> push to ECR -> Inspector scan ->
-# CVE gate -> Syft SBOM. Cosign signing + SLSA provenance are added in Phase 3.
+# build -> keyless AWS auth -> push to ECR -> Inspector scan -> CVE gate ->
+# Syft SBOM -> Cosign keyless sign -> SLSA provenance attestation ->
+# verification gate (signature + identity + provenance). Fails closed.
 
 on:
   push:
@@ -114,8 +115,74 @@ jobs:
           output-file: sbom.cyclonedx.json
           upload-artifact: true
 
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-cyclonedx
-          path: sbom.cyclonedx.json
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Cosign keyless sign (by digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Keyless is the default in Cosign 2.x. The signing identity is the
+          # GitHub OIDC token (audience: sigstore) -> Fulcio 10-min cert. The
+          # signature OCI artifact is written back into ECR next to the image.
+          # Always sign the DIGEST, never a tag: tags move, digests are content.
+          cosign sign --yes "${ECR_URI}@${DIGEST}"
+
+      - name: SLSA provenance attestation (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Build a minimal SLSA provenance predicate describing this build,
+          # then attach it to the image as a signed attestation. This is
+          # SLSA Build L2: provenance is generated in the same job that builds.
+          # True L3 needs an isolated reusable builder (slsa-github-generator);
+          # documented honestly in the writeup.
+          cat > provenance.json <<EOF
+          {
+            "buildType": "https://github.com/ToluGIT/aws-supply-chain-security/build@v1",
+            "builder": { "id": "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/supply-chain.yml@${GITHUB_REF}" },
+            "invocation": {
+              "configSource": {
+                "uri": "git+https://github.com/${GITHUB_REPOSITORY}@${GITHUB_REF}",
+                "digest": { "sha1": "${GITHUB_SHA}" },
+                "entryPoint": ".github/workflows/supply-chain.yml"
+              }
+            },
+            "metadata": {
+              "buildInvocationId": "${GITHUB_RUN_ID}",
+              "completeness": { "parameters": true, "environment": false, "materials": false }
+            }
+          }
+          EOF
+          cosign attest --yes --predicate provenance.json \
+            --type slsaprovenance "${ECR_URI}@${DIGEST}"
+
+      - name: Attach SBOM as attestation
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes --predicate sbom.cyclonedx.json \
+            --type cyclonedx "${ECR_URI}@${DIGEST}"
+
+      - name: Verify gate — signature + identity
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # The two --certificate-* flags are the security boundary. Without
+          # them this only proves "signed by some keyless identity". With them
+          # it proves "signed by a workflow in THIS repo via GitHub's OIDC".
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/ToluGIT/aws-supply-chain-security/.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${ECR_URI}@${DIGEST}"
+
+      - name: Verify gate — SLSA provenance attestation
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity-regexp "^https://github.com/ToluGIT/aws-supply-chain-security/.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${ECR_URI}@${DIGEST}"
+          echo "Image is signed, attested, and verified. Deployable."
