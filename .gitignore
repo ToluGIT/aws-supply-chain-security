@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+sbom*.json
+*.sig
+.DS_Store

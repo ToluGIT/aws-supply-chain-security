@@ -1,0 +1,107 @@
+name: supply-chain
+
+# Phase 2 scope: build -> keyless AWS auth -> push to ECR -> Inspector scan ->
+# CVE gate -> Syft SBOM. Cosign signing + SLSA provenance are added in Phase 3.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      app_dir:
+        description: "Which app variant to build (app = clean, app-vulnerable = CVE test)"
+        required: true
+        default: "app"
+        type: choice
+        options: [app, app-vulnerable]
+
+permissions:
+  id-token: write      # mint the OIDC token for keyless AWS auth (and Cosign in Phase 3)
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: scs-prod-ecr-app
+  ECR_URI: 221082197153.dkr.ecr.us-east-1.amazonaws.com/scs-prod-ecr-app
+  ROLE_ARN: arn:aws:iam::221082197153:role/scs-prod-role-gha-pipeline
+
+jobs:
+  build-scan-sbom:
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_ref: ${{ steps.build.outputs.image_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve app dir
+        id: appdir
+        run: echo "dir=${{ github.event.inputs.app_dir || 'app' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Assume AWS role (keyless OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR login
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        run: |
+          TAG="git-${GITHUB_SHA::12}"
+          IMAGE_REF="${ECR_URI}:${TAG}"
+          docker build -t "$IMAGE_REF" "${{ steps.appdir.outputs.dir }}"
+          docker push "$IMAGE_REF"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_REF" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Pushed $IMAGE_REF @ $DIGEST"
+
+      - name: Wait for Inspector scan
+        run: |
+          TAG="git-${GITHUB_SHA::12}"
+          echo "Waiting for Inspector scan to complete on $TAG ..."
+          for i in $(seq 1 30); do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name "$ECR_REPO" --image-id imageTag="$TAG" \
+              --region "$AWS_REGION" \
+              --query "imageScanStatus.status" --output text 2>/dev/null || echo "PENDING")
+            echo "  attempt $i: $STATUS"
+            if [ "$STATUS" = "COMPLETE" ]; then break; fi
+            if [ "$STATUS" = "FAILED" ]; then echo "scan failed"; exit 1; fi
+            sleep 20
+          done
+
+      - name: CVE gate (fail on CRITICAL)
+        run: |
+          TAG="git-${GITHUB_SHA::12}"
+          COUNTS=$(aws ecr describe-image-scan-findings \
+            --repository-name "$ECR_REPO" --image-id imageTag="$TAG" \
+            --region "$AWS_REGION" \
+            --query "imageScanFindingsSummary.findingSeverityCounts" --output json)
+          echo "Severity counts: $COUNTS"
+          CRIT=$(echo "$COUNTS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('CRITICAL',0))")
+          echo "CRITICAL findings: $CRIT"
+          if [ "$CRIT" -gt 0 ]; then
+            echo "::error::CVE gate failed — $CRIT CRITICAL findings. Image will not be signed."
+            exit 1
+          fi
+          echo "CVE gate passed."
+
+      - name: Generate SBOM (Syft, CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.build.outputs.image_ref }}
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          upload-artifact: true
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json

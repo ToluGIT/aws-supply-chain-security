@@ -1,0 +1,14 @@
+# Vulnerable variant — deliberately pinned to old versions with known recent
+# (2023-2024) CVEs. Inspector flags these on push, the CVE gate fails the build.
+# This is the Phase 4 "CVE gate" test (threat T2). DO NOT use these versions
+# for anything real.
+urllib3==1.26.4          # CVE-2023-43804, CVE-2024-37891 (proxy/cookie auth leak)
+requests==2.25.1         # CVE-2023-32681, CVE-2024-35195
+Jinja2==3.0.0            # CVE-2024-22195, CVE-2024-34064
+aiohttp==3.8.4           # CVE-2024-23334 (path traversal), CVE-2024-30251 (DoS)
+gunicorn==20.1.0         # CVE-2024-1135 (request smuggling)
+Werkzeug==2.0.3          # CVE-2024-34069 (debugger RCE)
+cryptography==3.4.8      # CVE-2023-50782, CVE-2024-26130
+Pillow==9.0.1            # CVE-2023-50447 (arbitrary code execution)
+setuptools==65.5.0       # CVE-2024-6345 (RCE via package download)
+Flask==2.0.3             # old Flask to pull the vulnerable Werkzeug/Jinja2 chain
