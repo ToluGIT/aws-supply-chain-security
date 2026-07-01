@@ -98,14 +98,15 @@ jobs:
           # cannot be actioned by us, so gating on them would block every build
           # regardless of our dependency hygiene. We gate on what we can fix.
           DIGEST="${{ steps.build.outputs.digest }}"
-          for SEV in CRITICAL HIGH; do
-            N=$(aws inspector2 list-findings \
-              --filter-criteria "{\"ecrImageHash\":[{\"comparison\":\"EQUALS\",\"value\":\"$DIGEST\"}],\"severity\":[{\"comparison\":\"EQUALS\",\"value\":\"$SEV\"}],\"fixAvailable\":[{\"comparison\":\"EQUALS\",\"value\":\"YES\"}]}" \
-              --region "$AWS_REGION" \
-              --query "length(findings)" --output text)
-            echo "Fixable $SEV findings: $N"
-            eval "FIX_$SEV=$N"
-          done
+          count_fixable() {
+            aws inspector2 list-findings \
+              --filter-criteria "{\"ecrImageHash\":[{\"comparison\":\"EQUALS\",\"value\":\"$DIGEST\"}],\"severity\":[{\"comparison\":\"EQUALS\",\"value\":\"$1\"}],\"fixAvailable\":[{\"comparison\":\"EQUALS\",\"value\":\"YES\"}]}" \
+              --region "$AWS_REGION" --query "length(findings)" --output text
+          }
+          FIX_CRITICAL=$(count_fixable CRITICAL)
+          FIX_HIGH=$(count_fixable HIGH)
+          echo "Fixable CRITICAL findings: ${FIX_CRITICAL:-0}"
+          echo "Fixable HIGH findings: ${FIX_HIGH:-0}"
           if [ "${FIX_CRITICAL:-0}" -gt 0 ] || [ "${FIX_HIGH:-0}" -gt 0 ]; then
             echo "::error::CVE gate failed — fixable CRITICAL=${FIX_CRITICAL} HIGH=${FIX_HIGH}. Image will not be signed."
             echo "Remediate by upgrading the flagged packages to their fixed versions."
