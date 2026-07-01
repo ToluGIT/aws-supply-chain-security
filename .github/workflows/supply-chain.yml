@@ -53,8 +53,14 @@ jobs:
       - name: Build and push image
         id: build
         run: |
-          TAG="git-${GITHUB_SHA::12}"
+          # Tag includes the variant so the clean and vulnerable builds of the
+          # same commit do not collide on the immutable tag. "app" -> git-<sha>,
+          # "app-vulnerable" -> git-<sha>-vuln.
+          SUFFIX=""
+          if [ "${{ steps.appdir.outputs.dir }}" = "app-vulnerable" ]; then SUFFIX="-vuln"; fi
+          TAG="git-${GITHUB_SHA::12}${SUFFIX}"
           IMAGE_REF="${ECR_URI}:${TAG}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           docker build -t "$IMAGE_REF" "${{ steps.appdir.outputs.dir }}"
           docker push "$IMAGE_REF"
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_REF" | cut -d@ -f2)
@@ -76,7 +82,7 @@ jobs:
               --region "$AWS_REGION" \
               --query "length(findings)" --output text 2>/dev/null || echo 0)
             COVERAGE=$(aws inspector2 list-coverage \
-              --filter-criteria "{\"ecrImageTags\":[{\"comparison\":\"EQUALS\",\"value\":\"git-${GITHUB_SHA::12}\"}]}" \
+              --filter-criteria "{\"ecrImageTags\":[{\"comparison\":\"EQUALS\",\"value\":\"${{ steps.build.outputs.tag }}\"}]}" \
               --region "$AWS_REGION" \
               --query "coveredResources[0].scanStatus.statusCode" --output text 2>/dev/null || echo "PENDING")
             echo "  attempt $i: coverage=$COVERAGE findings=$TOTAL"
