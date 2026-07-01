@@ -98,16 +98,24 @@ jobs:
           # cannot be actioned by us, so gating on them would block every build
           # regardless of our dependency hygiene. We gate on what we can fix.
           DIGEST="${{ steps.build.outputs.digest }}"
+          # count_fixable returns a SINGLE integer. inspector2 list-findings
+          # paginates, and `length(findings)` with --output text prints one
+          # number PER PAGE separated by newlines (e.g. "3\n0"). A previous
+          # version assigned that raw multi-line string straight into a numeric
+          # test, which threw "integer expression expected", short-circuited the
+          # if to false, and let a vulnerable image PASS — a fail-open gate.
+          # awk sums every line into one integer so the comparison is correct.
           count_fixable() {
             aws inspector2 list-findings \
               --filter-criteria "{\"ecrImageHash\":[{\"comparison\":\"EQUALS\",\"value\":\"$DIGEST\"}],\"severity\":[{\"comparison\":\"EQUALS\",\"value\":\"$1\"}],\"fixAvailable\":[{\"comparison\":\"EQUALS\",\"value\":\"YES\"}]}" \
-              --region "$AWS_REGION" --query "length(findings)" --output text
+              --region "$AWS_REGION" --query "length(findings)" --output text \
+              | awk '{s+=$1} END {print s+0}'
           }
           FIX_CRITICAL=$(count_fixable CRITICAL)
           FIX_HIGH=$(count_fixable HIGH)
-          echo "Fixable CRITICAL findings: ${FIX_CRITICAL:-0}"
-          echo "Fixable HIGH findings: ${FIX_HIGH:-0}"
-          if [ "${FIX_CRITICAL:-0}" -gt 0 ] || [ "${FIX_HIGH:-0}" -gt 0 ]; then
+          echo "Fixable CRITICAL findings: ${FIX_CRITICAL}"
+          echo "Fixable HIGH findings: ${FIX_HIGH}"
+          if [ "$FIX_CRITICAL" -gt 0 ] || [ "$FIX_HIGH" -gt 0 ]; then
             echo "::error::CVE gate failed — fixable CRITICAL=${FIX_CRITICAL} HIGH=${FIX_HIGH}. Image will not be signed."
             echo "Remediate by upgrading the flagged packages to their fixed versions."
             exit 1
