@@ -1,4 +1,4 @@
-# Vulnerable variant — deliberately pinned to old versions with known recent
+# Vulnerable variant, deliberately pinned to old versions with known recent
 # CVEs, chosen to be pure-Python so they install on python:3.12-slim without a
 # build toolchain (C-extension packages like aiohttp/Pillow/cryptography have
 # no 3.12 wheels at these old versions and would fail to compile, breaking the

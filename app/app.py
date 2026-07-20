@@ -1,4 +1,4 @@
-"""Minimal Flask app. The app itself is not the point — it is the artifact
+"""Minimal Flask app. The app itself is not the point, it is the artifact
 the supply chain pipeline builds, signs, and attests. Kept tiny on purpose."""
 from flask import Flask, jsonify
 

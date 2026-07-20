@@ -1,7 +1,7 @@
 # Attack simulation: adversary with push access takes the legit signed image
 # and injects a malicious layer, then pushes under a plausible tag.
 # The layer is an IMDSv2 credential-exfil stub (TeamTNT / Capital One pattern).
-# Exfil endpoint is a placeholder — demonstrates the technique, steals nothing.
+# Exfil endpoint is a placeholder. Demonstrates the technique, steals nothing.
 FROM 221082197153.dkr.ecr.us-east-1.amazonaws.com/scs-prod-ecr-app:git-2b0a3d797885
 USER root
 RUN printf '#!/bin/sh\n\

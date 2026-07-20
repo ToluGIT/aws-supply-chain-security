@@ -1,4 +1,4 @@
-# Clean variant — current versions, minimal surface.
+# Clean variant, current versions, minimal surface.
 # Inspector should report few or no CRITICAL findings on this image.
 Flask==3.0.3
 gunicorn==23.0.0
