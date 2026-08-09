@@ -23,8 +23,10 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPO: scs-prod-ecr-app
-  ECR_URI: 221082197153.dkr.ecr.us-east-1.amazonaws.com/scs-prod-ecr-app
-  ROLE_ARN: arn:aws:iam::221082197153:role/scs-prod-role-gha-pipeline
+  # Set AWS_ACCOUNT_ID as a repository variable (Settings, Secrets and
+  # variables, Actions, Variables). ECR_URI is not stored here: it is derived
+  # from the ecr-login output after the role is assumed.
+  ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/scs-prod-role-gha-pipeline
 
 jobs:
   build-scan-sbom:
@@ -49,6 +51,13 @@ jobs:
       - name: ECR login
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve ECR URI
+        run: |
+          # The login action outputs the registry host for the account whose
+          # role we just assumed, so the account ID never needs to be written
+          # into this file.
+          echo "ECR_URI=${{ steps.ecr.outputs.registry }}/${ECR_REPO}" >> "$GITHUB_ENV"
 
       - name: Build and push image
         id: build
